@@ -1,0 +1,21 @@
+data:
+  target_col: fraud_bool
+  month_col: month
+  train_months: [0, 1, 2, 3, 4, 5]
+  valid_months: [6]
+  test_months: [7]
+
+model:
+  family: xgboost
+  objective: binary:logistic
+  eval_metric: aucpr
+  tree_method: hist
+  device_preference: cuda
+
+retriever:
+  top_k: 20
+  temporal_rule: neighbor_month < query_month
+
+policy:
+  approve_threshold: 0.30
+  escalate_threshold: 0.65
