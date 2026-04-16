@@ -1,76 +1,120 @@
 # BAF Agentic Fraud Detection
 
-This repository implements an account-level fraud pipeline with:
-- leakage-safe BAF preprocessing and time-based split,
-- vanilla XGBoost baseline model,
-- retriever-enriched XGBoost model,
-- statistical comparison and model selection,
-- real-time inference with SHAP and LLM-generated fraud report.
+End-to-end account-level fraud workflow:
+- BAF preprocessing with strict time split,
+- vanilla and retriever-enriched XGBoost training,
+- statistical model comparison,
+- real-time scoring with SHAP,
+- DeepSeek-backed fraud report and recommendation (`approve | escalate | reject`).
 
-## Time split protocol
+## 1) Prerequisites (new machine)
 
-- Train: months `0-5`
-- Validation: month `6`
-- Test: month `7`
+- OS with NVIDIA GPU support (tested target: GeForce RTX 4090).
+- NVIDIA driver `560+` with CUDA runtime compatibility (`12.5` target).
+- Python `3.11` recommended.
+- Git and Docker installed.
 
-This split is enforced before fitting preprocessing artifacts to avoid leakage.
+## 2) Clone and create environment
 
-## Repository layout
+```bash
+git clone https://github.com/JuliaHandiprima/Fraud-Detection.git
+cd Fraud-Detection
+python -m venv .venv
+```
 
-- `src/preprocessing/baf_preprocessor.py`: BAF-only deterministic preprocessing.
-- `src/modeling/train_vanilla.py`: train/evaluate vanilla model.
-- `src/modeling/train_enriched.py`: train/evaluate retriever-enriched model.
-- `src/modeling/compare_models.py`: bootstrap delta PR-AUC and model selection.
-- `src/retriever/A2A.py`: migrated retriever backend.
-- `src/retriever/enrichment.py`: convert retriever output into model features.
-- `src/inference/account_inference.py`: real-time score + SHAP + report payload.
-- `src/inference/app.py`: Flask endpoint for account fraud report generation.
-- `scripts/run_experiment.py`: end-to-end experiment runner.
+Activate environment:
 
-## Setup
+- PowerShell:
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+- bash/zsh:
+```bash
+source .venv/bin/activate
+```
+
+Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### GPU training (RTX 4090 / CUDA 12.5 / driver 560+)
+## 3) Required data and artifacts
 
-- The training scripts auto-detect CUDA and use GPU XGBoost when available.
-- Runtime settings used for GPU:
-  - `tree_method = hist`
-  - `device = cuda`
-- If CUDA is unavailable, scripts automatically fall back to CPU.
-- To force CPU explicitly:
-  - `python scripts/run_experiment.py --data /path/to/base.csv --cpu-only`
+### BAF dataset
 
-If you use LLM report generation, set:
-- `DEEPSEEK_API_KEY`
-- optional `DEEPSEEK_BASE_URL`
-- optional `DEEPSEEK_MODEL`
+Place your BAF CSV (with `month` and `fraud_bool` columns) in any local path, for example:
 
-If you use retriever enrichment, run the retriever PostgreSQL/pgvector backend first.
-
-## Run experiment
-
-```bash
-python scripts/run_experiment.py --data /path/to/base.csv --results-dir results
+```text
+data/base.csv
 ```
 
-Outputs:
+### Retriever backend (required for enriched model + inference evidence)
+
+The retriever module expects pgvector/Postgres and preprocessing artifacts (`scaler.pkl`, `encoder.pkl`, `medians.pkl`, `feature_cols.pkl`) compatible with the BAF schema.
+
+If you are setting up from scratch, generate/load those artifacts using the retriever notebooks in:
+- `notebooks/experiments/retriever_preprocess_load_data.ipynb`
+- `notebooks/experiments/retriever_run_dataset.ipynb`
+
+and run the retriever DB/API stack per the retriever workflow before enriched training.
+
+## 4) Time split protocol (fixed)
+
+- Train: months `0-5`
+- Validation: month `6`
+- Test: month `7`
+
+This split is enforced before fitting preprocessing to avoid leakage.
+
+## 5) Run full experiment
+
+GPU-first (auto-detect CUDA, fallback to CPU):
+
+```bash
+python scripts/run_experiment.py --data data/base.csv --results-dir results
+```
+
+Force CPU:
+
+```bash
+python scripts/run_experiment.py --data data/base.csv --results-dir results --cpu-only
+```
+
+Produced outputs:
 - `results/vanilla/metrics.json`
 - `results/enriched/metrics.json`
 - `results/model_selection.json`
 - `results/summary.json`
 
-## Real-time account inference
+## 6) Prepare real-time inference + report generation
 
-Start API:
+Set DeepSeek credentials:
+
+```bash
+export DEEPSEEK_API_KEY=your_key_here
+export DEEPSEEK_BASE_URL=https://api.deepseek.com
+export DEEPSEEK_MODEL=deepseek-chat
+```
+
+PowerShell:
+
+```powershell
+$env:DEEPSEEK_API_KEY="your_key_here"
+$env:DEEPSEEK_BASE_URL="https://api.deepseek.com"
+$env:DEEPSEEK_MODEL="deepseek-chat"
+```
+
+## 7) Start account-level inference API
 
 ```bash
 python -m src.inference.app
 ```
 
-POST payload to `/agent/account_fraud_report`:
+Endpoint: `POST /agent/account_fraud_report`
+
+Example request:
 
 ```json
 {
@@ -78,21 +122,34 @@ POST payload to `/agent/account_fraud_report`:
   "input": {
     "query": {
       "month": 6,
-      "income": 0.8
+      "income": 0.8,
+      "source": "INTERNET",
+      "device_os": "windows"
     }
   }
 }
 ```
 
-Response contains:
+Response includes:
 - `fraud_score`
-- `recommended_action` (`approve | escalate | reject`)
-- top SHAP drivers
+- `recommended_action`
+- SHAP top drivers
 - retriever evidence summary
-- LLM narrative report text
+- LLM narrative report
 
-## Notes
+## 8) Repository structure
 
-- Current scope is account-level only.
-- NVIDIA transaction model notebooks are retained only as references.
-- Retriever enrichment must preserve temporal constraints (`neighbor_month < query_month`).
+- `src/preprocessing/baf_preprocessor.py`: deterministic BAF preprocessing.
+- `src/modeling/train_vanilla.py`: vanilla XGBoost pipeline.
+- `src/modeling/train_enriched.py`: retriever-enriched XGBoost pipeline.
+- `src/modeling/compare_models.py`: bootstrap delta PR-AUC and winner selection.
+- `src/inference/account_inference.py`: scoring + SHAP + LLM reporting logic.
+- `src/inference/app.py`: Flask API service.
+- `src/retriever/`: migrated retriever components.
+- `configs/baf_experiment.yaml`: experiment defaults.
+
+## 9) Notes
+
+- Scope is account-level only for this stage.
+- Training is GPU-aware and uses `xgboost` with `tree_method=hist`, `device=cuda` when available.
+- Generated artifacts (`results/`, `*.pkl`, caches) are intentionally gitignored for clean reproducibility.
