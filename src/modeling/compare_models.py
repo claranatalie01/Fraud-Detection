@@ -58,7 +58,12 @@ def compare_and_select(
 
     vanilla_metrics = json.loads((vanilla_dir / "metrics.json").read_text())["metrics"]
     enriched_metrics = json.loads((enriched_dir / "metrics.json").read_text())["metrics"]
-    preferred = "enriched" if enriched_metrics["pr_auc"] >= vanilla_metrics["pr_auc"] else "vanilla"
+    if enriched_metrics["pr_auc"] > vanilla_metrics["pr_auc"]:
+        preferred = "enriched"
+    elif enriched_metrics["pr_auc"] < vanilla_metrics["pr_auc"]:
+        preferred = "vanilla"
+    else:
+        preferred = "enriched" if enriched_metrics.get("brier_calibrated", 1.0) <= vanilla_metrics.get("brier_calibrated", 1.0) else "vanilla"
     report = {
         "preferred_model": preferred,
         "vanilla_metrics": vanilla_metrics,

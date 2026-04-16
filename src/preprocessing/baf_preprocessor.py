@@ -10,7 +10,7 @@ import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.preprocessing import OneHotEncoder, PowerTransformer, StandardScaler
 
 
 @dataclass(frozen=True)
@@ -32,10 +32,12 @@ class BAFPreprocessor:
         target_col: str = "fraud_bool",
         month_col: str = "month",
         treat_minus_one_as_missing: bool = True,
+        use_yeo_johnson: bool = True,
     ) -> None:
         self.target_col = target_col
         self.month_col = month_col
         self.treat_minus_one_as_missing = treat_minus_one_as_missing
+        self.use_yeo_johnson = use_yeo_johnson
         self.numeric_cols: list[str] = []
         self.categorical_cols: list[str] = []
         self.feature_cols_: list[str] = []
@@ -79,11 +81,11 @@ class BAFPreprocessor:
         X_train = self._replace_missing_markers(X_train)
 
         numeric_pipe = Pipeline(
-            steps=[
-                ("imputer", SimpleImputer(strategy="median")),
-                ("scaler", StandardScaler()),
-            ]
+            steps=[("imputer", SimpleImputer(strategy="median"))]
         )
+        if self.use_yeo_johnson:
+            numeric_pipe.steps.append(("power", PowerTransformer(method="yeo-johnson", standardize=False)))
+        numeric_pipe.steps.append(("scaler", StandardScaler()))
         categorical_pipe = Pipeline(
             steps=[
                 ("imputer", SimpleImputer(strategy="most_frequent")),

@@ -71,11 +71,13 @@ class AccountFraudInferenceService:
         self,
         model_path: str | Path,
         preprocessor_path: str | Path,
+        calibrator_path: str | Path | None = None,
         enriched: bool = True,
         policy: DecisionPolicy | None = None,
     ) -> None:
         self.model = joblib.load(model_path)
         self.preprocessor: BAFPreprocessor = BAFPreprocessor.load(preprocessor_path)
+        self.calibrator = joblib.load(calibrator_path) if calibrator_path else None
         self.enriched = enriched
         self.policy = policy or DecisionPolicy()
         try:
@@ -93,6 +95,8 @@ class AccountFraudInferenceService:
             X = pd.concat([X, retr], axis=1)
 
         score = float(self.model.predict_proba(X)[:, 1][0])
+        if self.calibrator is not None:
+            score = float(self.calibrator.predict_proba(np.array([[score]], dtype=float))[:, 1][0])
         action = recommend_action(score, self.policy)
         top_drivers = _top_shap_features(self.explainer, self.model, X, top_n=5)
         grounded = {
@@ -107,3 +111,24 @@ class AccountFraudInferenceService:
             "report": grounded,
             "llm_report_text": report_text,
         }
+
+    @classmethod
+    def from_champion_manifest(
+        cls,
+        manifest_path: str | Path,
+        variant_name: str,
+        enriched: bool = True,
+        policy: DecisionPolicy | None = None,
+    ) -> "AccountFraudInferenceService":
+        payload = json.loads(Path(manifest_path).read_text())
+        champion = payload["overall_champion"]
+        model_path = payload["artifact_template"].format(variant=variant_name, champion=champion)
+        calibrator_path = payload["calibrator_template"].format(variant=variant_name, champion=champion)
+        preprocessor_path = payload["preprocessor_template"].format(variant=variant_name, champion=champion)
+        return cls(
+            model_path=model_path,
+            preprocessor_path=preprocessor_path,
+            calibrator_path=calibrator_path,
+            enriched=enriched,
+            policy=policy,
+        )

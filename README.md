@@ -2,7 +2,7 @@
 
 End-to-end account-level fraud workflow:
 - BAF preprocessing with strict time split,
-- vanilla and retriever-enriched XGBoost training,
+- vanilla and retriever-enriched XGBoost training (SMOTE optional),
 - statistical model comparison,
 - real-time scoring with SHAP,
 - DeepSeek-backed fraud report and recommendation (`approve | escalate | reject`).
@@ -42,12 +42,17 @@ pip install -r requirements.txt
 
 ## 3) Required data and artifacts
 
-### BAF dataset
+### BAF datasets
 
-Place your BAF CSV (with `month` and `fraud_bool` columns) in any local path, for example:
+For the gap-matrix benchmark, prepare 6 BAF variant CSV files (each must include `month` and `fraud_bool`) for example:
 
 ```text
-data/base.csv
+data/variant_1.csv
+data/variant_2.csv
+data/variant_3.csv
+data/variant_4.csv
+data/variant_5.csv
+data/variant_6.csv
 ```
 
 ### Retriever backend (required for enriched model + inference evidence)
@@ -76,6 +81,20 @@ GPU-first (auto-detect CUDA, fallback to CPU):
 python scripts/run_experiment.py --data data/base.csv --results-dir results
 ```
 
+## 5b) Run full 6-variant benchmark (recommended)
+
+```bash
+python scripts/run_variant_benchmark.py \
+  --variants-json "[{\"name\":\"variant_1\",\"path\":\"data/variant_1.csv\"},{\"name\":\"variant_2\",\"path\":\"data/variant_2.csv\"},{\"name\":\"variant_3\",\"path\":\"data/variant_3.csv\"},{\"name\":\"variant_4\",\"path\":\"data/variant_4.csv\"},{\"name\":\"variant_5\",\"path\":\"data/variant_5.csv\"},{\"name\":\"variant_6\",\"path\":\"data/variant_6.csv\"}]" \
+  --results-dir results/variants
+```
+
+Optional fairness columns:
+
+```bash
+python scripts/run_variant_benchmark.py ... --fairness-group-cols source device_os
+```
+
 Force CPU:
 
 ```bash
@@ -87,6 +106,13 @@ Produced outputs:
 - `results/enriched/metrics.json`
 - `results/model_selection.json`
 - `results/summary.json`
+
+For the 6-variant run:
+- `results/variants/{variant}/vanilla/*`
+- `results/variants/{variant}/enriched/*`
+- `results/variants/{variant}/model_selection.json`
+- `results/variants/aggregate_summary.json`
+- `results/variants/champion_model.json`
 
 ## 6) Prepare real-time inference + report generation
 
@@ -109,6 +135,14 @@ $env:DEEPSEEK_MODEL="deepseek-chat"
 ## 7) Start account-level inference API
 
 ```bash
+python -m src.inference.app
+```
+
+To serve benchmark-selected champion artifacts, set:
+
+```bash
+export CHAMPION_MANIFEST_PATH=results/variants/champion_model.json
+export CHAMPION_VARIANT_NAME=variant_1
 python -m src.inference.app
 ```
 
@@ -137,19 +171,32 @@ Response includes:
 - retriever evidence summary
 - LLM narrative report
 
-## 8) Repository structure
+## 8) Evaluation metrics included
+
+- Performance: PR-AUC, ROC-AUC
+- Calibration: Brier raw and calibrated (Platt scaling)
+- Threshold metrics: precision, recall, F1 (raw + calibrated)
+- Alert yield: `% flagged` at selected threshold
+- Fairness (when subgroup columns provided):
+  - subgroup parity difference
+  - equal opportunity difference
+
+## 9) Repository structure
 
 - `src/preprocessing/baf_preprocessor.py`: deterministic BAF preprocessing.
 - `src/modeling/train_vanilla.py`: vanilla XGBoost pipeline.
 - `src/modeling/train_enriched.py`: retriever-enriched XGBoost pipeline.
 - `src/modeling/compare_models.py`: bootstrap delta PR-AUC and winner selection.
+- `scripts/run_variant_benchmark.py`: six-variant orchestration and aggregate summary.
 - `src/inference/account_inference.py`: scoring + SHAP + LLM reporting logic.
 - `src/inference/app.py`: Flask API service.
 - `src/retriever/`: migrated retriever components.
 - `configs/baf_experiment.yaml`: experiment defaults.
 
-## 9) Notes
+## 10) Notes
 
 - Scope is account-level only for this stage.
 - Training is GPU-aware and uses `xgboost` with `tree_method=hist`, `device=cuda` when available.
+- Champion preprocessing uses median imputation + Yeo-Johnson + standardization.
+- Imbalance handling is SMOTE on train split only.
 - Generated artifacts (`results/`, `*.pkl`, caches) are intentionally gitignored for clean reproducibility.

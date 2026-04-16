@@ -5,9 +5,10 @@ from pathlib import Path
 
 import joblib
 import pandas as pd
+from imblearn.over_sampling import SMOTE
 from xgboost import XGBClassifier
 
-from src.modeling.metrics import best_f1_threshold, evaluate_binary_classifier
+from src.modeling.metrics import CalibrationResult, best_f1_threshold, calibrate_platt, evaluate_binary_classifier
 from src.modeling.xgb_runtime import resolve_xgb_compute
 from src.preprocessing.baf_preprocessor import BAFPreprocessor, TimeSplit
 from src.retriever.enrichment import build_retriever_features_for_records
@@ -19,13 +20,22 @@ def train_enriched(
     target_col: str = "fraud_bool",
     month_col: str = "month",
     prefer_gpu: bool = True,
+    use_yeo_johnson: bool = True,
+    use_smote: bool = True,
+    smote_sampling_strategy: float = 0.5,
+    smote_random_state: int = 42,
+    fairness_group_cols: list[str] | None = None,
 ) -> dict:
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
 
     df = pd.read_csv(data_path)
     split = TimeSplit()
-    preprocessor = BAFPreprocessor(target_col=target_col, month_col=month_col)
+    preprocessor = BAFPreprocessor(
+        target_col=target_col,
+        month_col=month_col,
+        use_yeo_johnson=use_yeo_johnson,
+    )
     train_df, valid_df, test_df = preprocessor.split_by_month(df, split)
     preprocessor.fit(train_df)
     preprocessor.save(output)
@@ -41,6 +51,10 @@ def train_enriched(
     X_train_enriched = pd.concat([X_train, retr_train], axis=1)
     X_valid_enriched = pd.concat([X_valid, retr_valid], axis=1)
     X_test_enriched = pd.concat([X_test, retr_test], axis=1)
+    X_train_fit, y_train_fit = X_train_enriched, y_train
+    if use_smote:
+        smote = SMOTE(sampling_strategy=smote_sampling_strategy, random_state=smote_random_state)
+        X_train_fit, y_train_fit = smote.fit_resample(X_train_enriched, y_train)
 
     compute = resolve_xgb_compute(prefer_gpu=prefer_gpu)
     model = XGBClassifier(
@@ -56,25 +70,47 @@ def train_enriched(
         device=compute["device"],
     )
     model.fit(
-        X_train_enriched,
-        y_train,
+        X_train_fit,
+        y_train_fit,
         eval_set=[(X_valid_enriched, y_valid)],
         verbose=False,
     )
 
     valid_scores = model.predict_proba(X_valid_enriched)[:, 1]
     test_scores = model.predict_proba(X_test_enriched)[:, 1]
+    calibrator: CalibrationResult = calibrate_platt(y_valid.to_numpy(), valid_scores)
+    test_scores_cal = calibrator.model.predict_proba(test_scores.reshape(-1, 1))[:, 1]
     threshold = best_f1_threshold(y_valid.to_numpy(), valid_scores)
-    metrics = evaluate_binary_classifier(y_test.to_numpy(), test_scores, threshold)
+    fairness_groups = None
+    if fairness_group_cols:
+        present_cols = [c for c in fairness_group_cols if c in test_df.columns]
+        fairness_groups = test_df[present_cols] if present_cols else None
+    metrics = evaluate_binary_classifier(
+        y_true=y_test.to_numpy(),
+        y_score=test_scores,
+        y_score_calibrated=test_scores_cal,
+        threshold=threshold,
+        groups=fairness_groups,
+    )
 
     joblib.dump(model, output / "model.pkl")
+    joblib.dump(calibrator.model, output / "platt_calibrator.pkl")
     pd.DataFrame({"score": test_scores, "label": y_test.to_numpy()}).to_csv(output / "test_predictions.csv", index=False)
+    pd.DataFrame({"score_calibrated": test_scores_cal, "label": y_test.to_numpy()}).to_csv(output / "test_predictions_calibrated.csv", index=False)
     report = {
         "split": {"train_months": [0, 1, 2, 3, 4, 5], "valid_months": [6], "test_months": [7]},
         "counts": {"train": int(len(train_df)), "valid": int(len(valid_df)), "test": int(len(test_df))},
-        "metrics": metrics.__dict__,
+        "metrics": metrics,
         "retriever_features": retr_train.columns.tolist(),
         "compute": compute,
+        "preprocessing": {"use_yeo_johnson": use_yeo_johnson},
+        "imbalance": {
+            "method": "smote" if use_smote else "none",
+            "sampling_strategy": smote_sampling_strategy if use_smote else None,
+            "train_rows_before": int(len(X_train_enriched)),
+            "train_rows_after": int(len(X_train_fit)),
+        },
+        "calibration": calibrator.__dict__,
     }
     (output / "metrics.json").write_text(json.dumps(report, indent=2))
     return report
@@ -87,6 +123,20 @@ if __name__ == "__main__":
     parser.add_argument("--data", required=True, help="Path to BAF csv")
     parser.add_argument("--output", default="results/enriched")
     parser.add_argument("--cpu-only", action="store_true", help="Disable CUDA and force CPU training")
+    parser.add_argument("--disable-yeojohnson", action="store_true", help="Disable Yeo-Johnson transform")
+    parser.add_argument("--disable-smote", action="store_true", help="Disable SMOTE oversampling")
+    parser.add_argument("--smote-sampling-strategy", type=float, default=0.5)
+    parser.add_argument("--smote-random-state", type=int, default=42)
+    parser.add_argument("--fairness-group-cols", nargs="*", default=None)
     args = parser.parse_args()
-    result = train_enriched(args.data, args.output, prefer_gpu=not args.cpu_only)
+    result = train_enriched(
+        args.data,
+        args.output,
+        prefer_gpu=not args.cpu_only,
+        use_yeo_johnson=not args.disable_yeojohnson,
+        use_smote=not args.disable_smote,
+        smote_sampling_strategy=args.smote_sampling_strategy,
+        smote_random_state=args.smote_random_state,
+        fairness_group_cols=args.fairness_group_cols,
+    )
     print(json.dumps(result, indent=2))
