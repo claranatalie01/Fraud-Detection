@@ -97,6 +97,12 @@ def train_enriched(
     joblib.dump(calibrator.model, output / "platt_calibrator.pkl")
     pd.DataFrame({"score": test_scores, "label": y_test.to_numpy()}).to_csv(output / "test_predictions.csv", index=False)
     pd.DataFrame({"score_calibrated": test_scores_cal, "label": y_test.to_numpy()}).to_csv(output / "test_predictions_calibrated.csv", index=False)
+    calibration_report = {
+        "method": calibrator.method,
+        "brier_raw_valid": float(calibrator.brier_raw_valid),
+        "brier_cal_valid": float(calibrator.brier_cal_valid),
+        "improvement": float(calibrator.improvement),
+    }
     report = {
         "split": {"train_months": [0, 1, 2, 3, 4, 5], "valid_months": [6], "test_months": [7]},
         "counts": {"train": int(len(train_df)), "valid": int(len(valid_df)), "test": int(len(test_df))},
@@ -110,7 +116,7 @@ def train_enriched(
             "train_rows_before": int(len(X_train_enriched)),
             "train_rows_after": int(len(X_train_fit)),
         },
-        "calibration": calibrator.__dict__,
+        "calibration": calibration_report,
     }
     (output / "metrics.json").write_text(json.dumps(report, indent=2))
     return report
