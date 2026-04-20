@@ -1,0 +1,61 @@
+{
+  "split": {
+    "train_months": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "valid_months": [
+      6
+    ],
+    "test_months": [
+      7
+    ]
+  },
+  "counts": {
+    "train": 794989,
+    "valid": 108168,
+    "test": 96843
+  },
+  "metrics": {
+    "pr_auc": 0.19118681572732213,
+    "roc_auc": 0.887151509453543,
+    "brier_raw": 0.013357722993969057,
+    "brier_calibrated": 0.013590102102788895,
+    "precision": 0.20627450980392156,
+    "recall": 0.36834733893557425,
+    "f1": 0.2644544997486174,
+    "precision_calibrated": 0.31024531024531027,
+    "recall_calibrated": 0.15056022408963585,
+    "f1_calibrated": 0.20273455917020272,
+    "threshold": 0.15,
+    "alert_yield_pct": 2.633127846101422,
+    "fairness": {
+      "subgroup_parity_difference": null,
+      "equal_opportunity_difference": null,
+      "status": "skipped_no_groups"
+    }
+  },
+  "compute": {
+    "tree_method": "hist",
+    "device": "cuda"
+  },
+  "preprocessing": {
+    "use_yeo_johnson": true
+  },
+  "imbalance": {
+    "method": "smote",
+    "sampling_strategy": 0.5,
+    "train_rows_before": 794989,
+    "train_rows_after": 1180257
+  },
+  "calibration": {
+    "method": "platt_sigmoid",
+    "brier_raw_valid": 0.012746289994382471,
+    "brier_cal_valid": 0.012521423929791683,
+    "improvement": 0.00022486606459078823
+  }
+}

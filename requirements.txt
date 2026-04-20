@@ -9,3 +9,6 @@ scikit-learn
 imbalanced-learn
 shap
 xgboost
+streamlit
+matplotlib
+seaborn

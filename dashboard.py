@@ -3,6 +3,7 @@ import requests
 import pandas as pd
 import json
 from datetime import datetime
+from risk_scoring_agent import RiskScoringAgent
 
 # Configuration
 RETRIEVER_URL = "http://localhost:5001/retrieve"
@@ -16,6 +17,8 @@ st.title("🕵️ Fraud Detection Assistant")
 # ------------------------------------------------------------------
 if "retriever_data" not in st.session_state:
     st.session_state.retriever_data = None          # cached retriever output
+if "risk_assessment" not in st.session_state:
+    st.session_state.risk_assessment = None         # cached risk assessment
 if "current_app_id" not in st.session_state:
     st.session_state.current_app_id = None
 if "chat_history" not in st.session_state:
@@ -40,14 +43,18 @@ def fetch_retriever_data(app_id):
         st.error(f"Error calling Retriever Agent: {e}")
         return None
 
-def call_writer_agent(query_metadata, similar_cases, local_fraud_rate, ml_score, question):
+def call_risk_scoring(query_metadata, retriever_output):
+    """Call risk scoring to get combined score with SHAP."""
+    agent = RiskScoringAgent()
+    return agent.assess_application(query_metadata, retriever_output)
+
+def call_writer_agent(query_metadata, similar_cases, local_fraud_rate, risk_assessment, question):
     """Call writer agent and return narrative string."""
     payload = {
         "query_metadata": query_metadata,
         "similar_cases": similar_cases,
         "local_fraud_rate": local_fraud_rate,
-        "risk_score": ml_score if ml_score is not None else None,
-        "shap_values": None,
+        "risk_assessment": risk_assessment,  # Pass full risk assessment
         "question": question if question and question.strip() else None
     }
     try:
@@ -57,34 +64,13 @@ def call_writer_agent(query_metadata, similar_cases, local_fraud_rate, ml_score,
     except Exception as e:
         return f"Error generating narrative: {e}"
 
-def display_analysis_summary(ret_data, ml_score):
-    """Display metrics, risk level, and similar cases table."""
-    similar_cases = ret_data["similar_cases"]
-    local_fraud_rate = ret_data["local_fraud_rate"]
-    total_neighbors = ret_data["total_neighbors"]
-    fraud_count = sum(1 for c in similar_cases if c["fraud_bool"] == 1)
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Local Fraud Rate", f"{local_fraud_rate:.2%}", 
-                help=f"{fraud_count} out of {total_neighbors} similar cases were fraudulent")
-    col2.metric("Total Similar Cases", total_neighbors)
-    col3.metric("ML Risk Score", f"{ml_score:.2f}" if ml_score is not None else "Not provided")
-    
-    if local_fraud_rate < 0.2:
-        risk_level = "🟢 Low Risk"
-        recommendation = "Approve"
-    elif local_fraud_rate < 0.5:
-        risk_level = "🟡 Medium Risk"
-        recommendation = "Review"
-    else:
-        risk_level = "🔴 High Risk"
-        recommendation = "Reject"
-    st.info(f"**Risk Level:** {risk_level} | **Recommendation:** {recommendation}")
-    
-    # Build table of similar cases (top 20)
+def display_similar_cases_table(similar_cases):
+    """Display similar cases table."""
     all_features = ['income', 'velocity_6h', 'payment_type', 'prev_address_months_count', 
-                    'intended_balcon_amount', 'name_email_similarity', 'zip_count_4w']
+                    'intended_balcon_amount', 'name_email_similarity', 'zip_count_4w',
+                    'credit_risk_score', 'customer_age']
     selected_features = st.multiselect("Show features in table", all_features, default=all_features[:3], key="table_features")
+    
     if similar_cases:
         df_data = []
         for case in similar_cases:
@@ -115,29 +101,38 @@ def display_analysis_summary(ret_data, ml_score):
 with st.sidebar:
     st.header("📌 Analysis Controls")
     app_id = st.number_input("Application ID", min_value=1, step=1, value=856982, key="app_id_input")
-    use_ml = st.checkbox("Include ML risk score?")
-    ml_score = None
-    if use_ml:
-        ml_score = st.slider("ML risk score (0-1)", 0.0, 1.0, 0.85, 0.01)
     
     col_btn1, col_btn2 = st.columns(2)
     if col_btn1.button("🔄 New Analysis", use_container_width=True):
-        # Fetch new data and reset chat history for the new app
+        # Fetch new data
         with st.spinner("Fetching similar cases..."):
             new_data = fetch_retriever_data(app_id)
         if new_data:
             st.session_state.retriever_data = new_data
             st.session_state.current_app_id = app_id
-            st.session_state.chat_history = []   # clear chat history for new app
+            st.session_state.chat_history = []
             st.session_state.last_narrative = ""
-            # Automatically generate default report (empty question) for the new app
+            
+            # Get risk assessment with SHAP
+            with st.spinner("Calculating risk score with SHAP..."):
+                risk_assessment = call_risk_scoring(
+                    new_data["query_metadata"],
+                    {
+                        "local_fraud_rate": new_data["local_fraud_rate"],
+                        "similar_cases": new_data["similar_cases"],
+                        "total_neighbors": new_data["total_neighbors"]
+                    }
+                )
+                st.session_state.risk_assessment = risk_assessment
+            
+            # Generate default report (empty question → full report)
             with st.spinner("Generating initial report..."):
                 narrative = call_writer_agent(
                     new_data["query_metadata"],
                     new_data["similar_cases"],
                     new_data["local_fraud_rate"],
-                    ml_score,
-                    None   # empty question → full report
+                    risk_assessment,
+                    None
                 )
                 st.session_state.last_narrative = narrative
                 st.session_state.chat_history.append({"role": "assistant", "content": narrative})
@@ -145,21 +140,117 @@ with st.sidebar:
     
     if col_btn2.button("🗑️ Clear Cache", use_container_width=True):
         st.session_state.retriever_data = None
+        st.session_state.risk_assessment = None
         st.session_state.current_app_id = None
         st.session_state.chat_history = []
         st.session_state.last_narrative = ""
         st.rerun()
     
     st.divider()
-    st.caption("**Instructions**\n- Enter an Application ID and click 'New Analysis'.\n- Ask follow‑up questions in the chat box below.\n- Each follow‑up uses the same cached similar cases (no refetch).\n- To analyse a different ID, click 'New Analysis' again.")
+    
+    # Display weights information
+    st.caption("**Risk Scoring Weights**")
+    st.caption("- ML Model: 60%")
+    st.caption("- Local Fraud Rate: 40%")
+    
+    st.divider()
+    st.caption("**Instructions**\n- Enter an Application ID and click 'New Analysis'.\n- Ask follow‑up questions in the chat box below.\n- Each follow‑up uses the same cached data (no refetch).\n- To analyse a different ID, click 'New Analysis' again.")
 
 # ------------------------------------------------------------------
 # Main area: chat interface and analysis display
 # ------------------------------------------------------------------
-if st.session_state.retriever_data is not None:
-    # Display analysis summary (metrics + table) always on top
-    display_analysis_summary(st.session_state.retriever_data, ml_score)
+if st.session_state.retriever_data is not None and st.session_state.risk_assessment is not None:
+    ret_data = st.session_state.retriever_data
+    risk_assessment = st.session_state.risk_assessment
     
+    # ------------------------------------------------------------------
+    # Risk Metrics Display
+    # ------------------------------------------------------------------
+    st.subheader("📊 Risk Assessment")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric(
+            "ML Model Score", 
+            f"{risk_assessment['ml_score']:.2%}",
+            help="XGBoost model fraud probability based on application patterns"
+        )
+    
+    with col2:
+        st.metric(
+            "Local Fraud Rate", 
+            f"{risk_assessment['local_fraud_rate']:.2%}",
+            help=f"Fraud rate among {risk_assessment.get('similar_cases_count', 0)} similar past applications"
+        )
+    
+    with col3:
+        st.metric(
+            "Final Risk Score", 
+            f"{risk_assessment['final_score']:.2%}",
+            help=f"Weighted combination: ML (60%) + Local Fraud Rate (40%)"
+        )
+    
+    with col4:
+        # Recommendation with color coding
+        recommendation = risk_assessment['recommendation']
+        if recommendation == "APPROVE":
+            st.success(f"**Recommendation:** {recommendation}")
+        elif recommendation == "ESCALATE":
+            st.warning(f"**Recommendation:** {recommendation}")
+        else:
+            st.error(f"**Recommendation:** {recommendation}")
+    
+    # ------------------------------------------------------------------
+    # Risk Level Indicator
+    # ------------------------------------------------------------------
+    final_score = risk_assessment['final_score']
+    if final_score < 0.30:
+        risk_level = "🟢 Low Risk"
+        risk_color = "green"
+    elif final_score < 0.65:
+        risk_level = "🟡 Medium Risk"
+        risk_color = "orange"
+    else:
+        risk_level = "🔴 High Risk"
+        risk_color = "red"
+    
+    st.markdown(f"### Risk Level: <span style='color:{risk_color}'>{risk_level}</span>", unsafe_allow_html=True)
+    
+    # ------------------------------------------------------------------
+    # SHAP Feature Importance
+    # ------------------------------------------------------------------
+    with st.expander("🔍 View SHAP Feature Importance (Why this score?)"):
+        shap_df = pd.DataFrame(risk_assessment['top_shap_features'])
+        
+        # Add direction column
+        shap_df['direction'] = shap_df['shap_value'].apply(
+            lambda x: '↑ Increases Risk' if x > 0 else '↓ Decreases Risk'
+        )
+        shap_df['abs_impact'] = shap_df['shap_value'].abs()
+        shap_df = shap_df.sort_values('abs_impact', ascending=False)
+        
+        # Display formatted table
+        st.dataframe(
+            shap_df[['feature', 'shap_value', 'direction']].head(10),
+            use_container_width=True,
+            column_config={
+                'feature': 'Feature',
+                'shap_value': st.column_config.NumberColumn('Impact', format='%.4f'),
+                'direction': 'Effect'
+            }
+        )
+        
+        st.caption("Positive SHAP values = pushes prediction toward fraud | Negative = pushes away from fraud")
+    
+    # ------------------------------------------------------------------
+    # Similar Cases Table
+    # ------------------------------------------------------------------
+    display_similar_cases_table(ret_data["similar_cases"])
+    
+    # ------------------------------------------------------------------
+    # Chat Interface
+    # ------------------------------------------------------------------
     st.divider()
     st.subheader("💬 Ask Follow‑up Questions")
     
@@ -169,7 +260,7 @@ if st.session_state.retriever_data is not None:
             st.markdown(msg["content"])
     
     # Chat input for follow‑up questions
-    if prompt := st.chat_input("Ask a follow‑up question..."):
+    if prompt := st.chat_input("Ask a follow‑up question (e.g., 'Why was this flagged?', 'What patterns do you see?')"):
         # Add user message to history
         st.session_state.chat_history.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
@@ -177,17 +268,34 @@ if st.session_state.retriever_data is not None:
         
         # Generate answer using cached data
         with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
+            with st.spinner("Analyzing..."):
                 ret_data = st.session_state.retriever_data
+                risk_assessment = st.session_state.risk_assessment
+                
                 answer = call_writer_agent(
                     ret_data["query_metadata"],
                     ret_data["similar_cases"],
                     ret_data["local_fraud_rate"],
-                    ml_score,
+                    risk_assessment,
                     prompt
                 )
                 st.markdown(answer)
                 st.session_state.chat_history.append({"role": "assistant", "content": answer})
                 st.session_state.last_narrative = answer
+
 else:
     st.info("👈 Enter an Application ID in the sidebar and click 'New Analysis' to start.")
+    
+    # Show example
+    with st.expander("ℹ️ How to use"):
+        st.markdown("""
+        1. **Enter an Application ID** in the sidebar (e.g., 856982)
+        2. **Click 'New Analysis'** to fetch similar cases and calculate risk score
+        3. **Review the risk assessment** including:
+           - ML Model Score (60% weight)
+           - Local Fraud Rate from similar past cases (40% weight)
+           - Final combined risk score
+           - SHAP feature importance explaining why
+        4. **Ask follow-up questions** in the chat to dive deeper
+        5. **Try different Application IDs** to compare risk profiles
+        """)

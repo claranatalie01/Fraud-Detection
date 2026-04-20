@@ -1,0 +1,68 @@
+{
+  "split": {
+    "train_months": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "valid_months": [
+      6
+    ],
+    "test_months": [
+      7
+    ]
+  },
+  "counts": {
+    "train": 794989,
+    "valid": 108168,
+    "test": 96843
+  },
+  "metrics": {
+    "pr_auc": 0.19243472437941708,
+    "roc_auc": 0.8865820304960006,
+    "brier_raw": 0.013269441325768272,
+    "brier_calibrated": 0.013602510840480805,
+    "precision": 0.24691358024691357,
+    "recall": 0.2801120448179272,
+    "f1": 0.26246719160104987,
+    "precision_calibrated": 0.3388888888888889,
+    "recall_calibrated": 0.12815126050420167,
+    "f1_calibrated": 0.18597560975609756,
+    "threshold": 0.2,
+    "alert_yield_pct": 1.6728106316409035,
+    "fairness": {
+      "subgroup_parity_difference": null,
+      "equal_opportunity_difference": null,
+      "status": "skipped_no_groups"
+    }
+  },
+  "retriever_features": [
+    "retr_local_fraud_rate",
+    "retr_total_neighbors",
+    "retr_fraud_neighbors",
+    "retr_similarity_mean",
+    "retr_similarity_max"
+  ],
+  "compute": {
+    "tree_method": "hist",
+    "device": "cuda"
+  },
+  "preprocessing": {
+    "use_yeo_johnson": true
+  },
+  "imbalance": {
+    "method": "smote",
+    "sampling_strategy": 0.5,
+    "train_rows_before": 794989,
+    "train_rows_after": 1180257
+  },
+  "calibration": {
+    "method": "platt_sigmoid",
+    "brier_raw_valid": 0.012581921444951117,
+    "brier_cal_valid": 0.012530137636540244,
+    "improvement": 5.1783808410872656e-05
+  }
+}

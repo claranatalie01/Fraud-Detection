@@ -1,7 +1,5 @@
 """
-app.py
-Flask Retriever Agent – finds similar past cases for a given application ID.
-Run after data is loaded and indexes are created.
+app.py - Updated Retriever Agent with better output for risk scoring
 """
 
 from flask import Flask, request, jsonify
@@ -49,10 +47,7 @@ categorical_cols = [
 ]
 
 def preprocess_new_application(raw_dict):
-    """
-    Convert raw application dict into a scaled feature vector.
-    raw_dict must contain all features except fraud_bool.
-    """
+    """Convert raw application dict into a scaled feature vector."""
     df_new = pd.DataFrame([raw_dict])
     
     for col in numerical_cols:
@@ -97,18 +92,15 @@ def retrieve():
     app_id = data['application_id']
     
     try:
-        # Fetch the full feature dictionary and month for this ID
         app_data, current_month = get_application_by_id(app_id)
     except Exception as e:
         return jsonify({"error": str(e)}), 400
     
-    # Preprocess the fetched features
     try:
         query_vector = preprocess_new_application(app_data)
     except Exception as e:
         return jsonify({"error": f"Preprocessing failed: {str(e)}"}), 400
     
-    # Query similar cases (excluding the query ID itself, only earlier months)
     conn = get_db()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute("""
@@ -145,8 +137,10 @@ def retrieve():
         "similar_cases": similar_cases,
         "local_fraud_rate": local_fraud_rate,
         "total_neighbors": len(similar_cases),
-        "query_metadata": app_data,        # <-- NEW: full feature dict of the queried application
-        "query_month": current_month       # <-- NEW: month of the queried application
+        "fraud_neighbors": fraud_count,
+        "query_metadata": app_data,
+        "query_month": current_month,
+        "query_id": app_id
     }
     return jsonify(response)
 
