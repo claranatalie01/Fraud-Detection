@@ -19,7 +19,6 @@ env/
 
 # Local data and experiment outputs
 data/
-*.csv
 *.parquet
 *.feather
 *.db
