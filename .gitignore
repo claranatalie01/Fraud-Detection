@@ -25,7 +25,6 @@ data/
 *.sqlite
 
 # Model artifacts (large/generated)
-*.pkl
 *.joblib
 *.pt
 *.bin
