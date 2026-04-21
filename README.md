@@ -1,3 +1,4 @@
+
 # BAF Agentic Fraud Detection
 
 ![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)
@@ -22,6 +23,9 @@ Watch the interactive fraud analysis in action:
 *Enter an application ID → get local fraud rate, similar cases table, and a forensic narrative.*
 
 ---
+## 📊 Project Presentation
+View the slides (PDF)
+[COMP3520_Fraud Detection.pdf](https://github.com/user-attachments/files/26941361/COMP3520_Fraud.Detection.pdf)
 
 ## 1) Prerequisites (new machine)
 
