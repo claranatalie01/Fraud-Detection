@@ -1,11 +1,27 @@
 # BAF Agentic Fraud Detection
 
-End-to-end account-level fraud workflow:
-- BAF preprocessing with strict time split,
-- vanilla and retriever-enriched XGBoost training (SMOTE optional),
-- statistical model comparison,
-- real-time scoring with SHAP,
-- DeepSeek-backed fraud report and recommendation (`approve | escalate | reject`).
+![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)
+![License](https://img.shields.io/badge/license-CC%20BY--NC--SA%204.0-lightgrey.svg)
+
+End-to-end account-level fraud workflow for SME loan applications.  
+Detects **account farms and mules** using a retriever‑enriched XGBoost model, provides **explainable decisions** via SHAP, and generates **plain‑English narratives** with DeepSeek.
+
+## 🔍 What it does
+
+- **Detects account farms & mules** – identifies fraud rings by analysing shared devices, emails, and high‑velocity patterns.
+- **Explainable decisions** – outputs SHAP top drivers and a human‑readable report (verdict, risk indicators, recommendation).
+- **Real‑time scoring** – low‑latency inference API with `approve | escalate | reject` recommendations.
+- **Fairness‑aware** – evaluates subgroup parity and equal opportunity across protected attributes.
+
+## 🎥 Demo – Streamlit Dashboard
+
+Watch the interactive fraud analysis in action:
+
+[![Streamlit Demo](https://github.com/user-attachments/assets/6219dcdb-bc92-431c-8aec-b22a665d983b)](https://github.com/user-attachments/assets/6219dcdb-bc92-431c-8aec-b22a665d983b)
+
+*Enter an application ID → get local fraud rate, similar cases table, and a forensic narrative.*
+
+---
 
 ## 1) Prerequisites (new machine)
 
